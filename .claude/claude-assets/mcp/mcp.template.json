@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-mcp.json",
+  "mcpServers": {
+    "jira-local": {
+      "command": "python",
+      "args": [
+        "./jira-mcp/server.py"
+      ],
+      "env": {
+        "JIRA_BASE_URL": "${JIRA_BASE_URL}",
+        "JIRA_USERNAME": "${JIRA_USERNAME}",
+        "JIRA_PASSWORD": "${JIRA_PASSWORD}",
+        "JIRA_API_PATH": "${JIRA_API_PATH}"
+      }
+    }
+  }
+}
