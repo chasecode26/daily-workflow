@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 一键安装：技能 + MCP 依赖 + 环境变量检查 + 本地配置初始化/校验
+# 一键安装：技能 + JIRA MCP 依赖 + 本地配置初始化/校验
 # 用法: bash install.sh [--dry-run]
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=false
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true && echo "[dry-run] 仅预览"
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true && echo "[dry-run] 仅预览，不落盘"
 
 run() {
   if [[ "$DRY_RUN" == true ]]; then
@@ -16,24 +16,82 @@ run() {
   fi
 }
 
-copy_if_missing() {
+initialize_or_update_config() {
   local src="$1"
   local dst="$2"
-  if [[ -f "$dst" ]]; then
-    echo "  [已存在] $dst"
-  elif [[ ! -f "$src" ]]; then
-    echo "  [缺失模板] $src"
-  elif [[ "$DRY_RUN" == true ]]; then
-    echo "  [dry-run] cp \"$src\" \"$dst\""
-  else
-    cp "$src" "$dst"
-    echo "  [已初始化] $dst"
+
+  if [[ ! -f "$src" ]]; then
+    echo "  [缺失示例] $src"
+    return 1
   fi
+
+  if [[ ! -f "$dst" ]]; then
+    if [[ "$DRY_RUN" == true ]]; then
+      echo "  [dry-run] cp \"$src\" \"$dst\""
+    else
+      cp "$src" "$dst"
+      echo "  [已初始化] $dst"
+    fi
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "  [dry-run] 配置已存在，将询问是否覆盖: $dst"
+    return 1
+  fi
+
+  read -r -p "  [已存在] $dst，是否用示例覆盖？[y/N] " answer
+  if [[ "$answer" =~ ^([yY]|yes|YES)$ ]]; then
+    cp "$src" "$dst"
+    echo "  [已覆盖] $dst"
+    return 0
+  fi
+
+  echo "  [保留原配置] $dst"
+  return 1
 }
 
-# ── 1. 技能安装 ────────────────────────────────────────────
+is_example_config() {
+  local src="$1"
+  local dst="$2"
+  [[ -f "$src" && -f "$dst" ]] || return 1
+  python -c "import json, pathlib, sys; src, dst = sys.argv[1:3]; print(json.loads(pathlib.Path(src).read_text(encoding='utf-8')) == json.loads(pathlib.Path(dst).read_text(encoding='utf-8')))" "$src" "$dst" | grep -qx "True"
+}
+
+config_needs_setup() {
+  local jira_file="$1"
+  local mapping_file="$2"
+  python -c "import json, pathlib, sys
+jira_path, mapping_path = sys.argv[1:3]
+jira = json.loads(pathlib.Path(jira_path).read_text(encoding='utf-8'))
+mapping = json.loads(pathlib.Path(mapping_path).read_text(encoding='utf-8'))
+if jira.get('baseUrl') == 'https://jira.example.com' or jira.get('username') == 'your_username' or jira.get('password') == 'your_password':
+    print('True')
+    raise SystemExit(0)
+for item in mapping.get('mappings') or []:
+    comment = str(item.get('_comment', ''))
+    project_name = str(item.get('projectName', ''))
+    frontend = str(item.get('frontendPath', ''))
+    backend = str(item.get('backendPath', ''))
+    root = str(item.get('rootPath', ''))
+    if '示例' in comment or project_name == '你的JIRA项目名' or 'your-project' in frontend or 'your-project' in backend or 'your-project' in root:
+        print('True')
+        raise SystemExit(0)
+print('False')" "$jira_file" "$mapping_file" | grep -qx "True"
+}
+
 SKILLS_SRC="$SCRIPT_DIR/claude-assets/skills"
 SKILLS_DST="$HOME/.claude/skills"
+REQ="$SCRIPT_DIR/jira-mcp/requirements.txt"
+HOOK="$SCRIPT_DIR/claude-assets/hooks/svn_jira_transition_hook.py"
+SKILL_SRC_DIR="$SCRIPT_DIR/claude-assets/skills/daily-workflow"
+SKILL_TARGET_DIR="$SKILLS_DST/daily-workflow"
+JIRA_EXAMPLE="$SKILL_SRC_DIR/jira-config.example.json"
+JIRA_FILE="$SKILL_TARGET_DIR/jira-config.json"
+MAPPING_EXAMPLE="$SKILL_SRC_DIR/svn-mapping.example.json"
+MAPPING_FILE="$SKILL_TARGET_DIR/svn-mapping.json"
+VALIDATOR="$SKILL_SRC_DIR/validate_daily_workflow_config.py"
+CONFIG_CHANGED=false
 
 echo ""
 echo "=== 安装技能 ==="
@@ -52,100 +110,66 @@ else
   echo "  已安装 $count 个技能"
 fi
 
-# ── 2. MCP Python 依赖 ─────────────────────────────────────
-MCP_DIR="$SCRIPT_DIR/jira-mcp"
-REQ="$MCP_DIR/requirements.txt"
-
 echo ""
-echo "=== 安装 MCP 依赖 ==="
+echo "=== 安装 JIRA MCP 依赖 ==="
 if [[ ! -f "$REQ" ]]; then
-  echo "跳过：未找到 $REQ"
+  echo "跳过：未找到依赖文件 ($REQ)"
 else
   echo "  pip install -r $REQ"
   run pip install -r "$REQ" -q
   echo "  依赖安装完成"
 fi
 
-# ── 3. 环境变量检查 ────────────────────────────────────────
 echo ""
-echo "=== 检查 JIRA 环境变量 ==="
-REQUIRED_VARS=(JIRA_BASE_URL JIRA_USERNAME JIRA_PASSWORD)
-OPTIONAL_VARS=(JIRA_API_PATH JIRA_TIMEOUT)
-missing=0
-
-for var in "${REQUIRED_VARS[@]}"; do
-  if [[ -z "${!var:-}" ]]; then
-    echo "  [缺失] $var  <-- 必填"
-    missing=$((missing + 1))
-  else
-    echo "  [OK]   $var"
-  fi
-done
-
-for var in "${OPTIONAL_VARS[@]}"; do
-  if [[ -z "${!var:-}" ]]; then
-    echo "  [默认] $var（未设置，将使用代码默认值）"
-  else
-    echo "  [OK]   $var"
-  fi
-done
-
-if [[ $missing -gt 0 ]]; then
-  echo ""
-  echo "警告: $missing 个必填环境变量未设置，MCP 启动时会报错"
-  echo "请在系统环境变量或 .env 中配置后重新运行"
-fi
-
-# ── 4. hooks 检查 ──────────────────────────────────────────
-HOOK="$SCRIPT_DIR/claude-assets/hooks/svn_jira_transition_hook.py"
-
-echo ""
-echo "=== 检查 Hooks ==="
+echo "=== 检查 Hook ==="
 if [[ -f "$HOOK" ]]; then
-  echo "  [OK] svn_jira_transition_hook.py 存在"
-  echo "       路径: $HOOK"
-  echo "       已通过 .claude/settings.json 引用，无需额外安装"
+  echo "  [已就绪] svn_jira_transition_hook.py"
+  echo "           路径: $HOOK"
 else
   echo "  [缺失] $HOOK"
 fi
 
-# ── 5. 初始化本地 daily-workflow 配置 ─────────────────────
-SKILL_DIR="$SCRIPT_DIR/claude-assets/skills/daily-workflow"
-CONFIG_TEMPLATE="$SKILL_DIR/config.example.json"
-MAPPING_TEMPLATE="$SKILL_DIR/svn-mapping-template.json"
-VERIFY_TEMPLATE="$SKILL_DIR/verification.template.json"
-CONFIG_FILE="$SKILL_DIR/config.json"
-MAPPING_FILE="$SKILL_DIR/svn-mapping.json"
-VERIFY_FILE="$SKILL_DIR/verification.json"
+echo ""
+echo "=== 初始化 daily-workflow 本地配置 ==="
+run mkdir -p "$SKILL_TARGET_DIR"
+if initialize_or_update_config "$JIRA_EXAMPLE" "$JIRA_FILE"; then
+  CONFIG_CHANGED=true
+fi
+if initialize_or_update_config "$MAPPING_EXAMPLE" "$MAPPING_FILE"; then
+  CONFIG_CHANGED=true
+fi
+echo "  配置目录: $SKILL_TARGET_DIR"
 
 echo ""
-echo "=== 初始化 daily-workflow 配置 ==="
-copy_if_missing "$CONFIG_TEMPLATE" "$CONFIG_FILE"
-copy_if_missing "$MAPPING_TEMPLATE" "$MAPPING_FILE"
-copy_if_missing "$VERIFY_TEMPLATE" "$VERIFY_FILE"
-
-# ── 6. 本地 daily-workflow 配置校验 ───────────────────────
-VALIDATOR="$SCRIPT_DIR/claude-assets/skills/daily-workflow/validate_daily_workflow_config.py"
-
-echo ""
-echo "=== 检查 daily-workflow 配置 ==="
+echo "=== 校验 daily-workflow 本地配置 ==="
 if [[ ! -f "$VALIDATOR" ]]; then
   echo "跳过：未找到校验脚本 ($VALIDATOR)"
-elif [[ ! -f "$CONFIG_FILE" ]]; then
-  echo "跳过：未找到本地配置 ($CONFIG_FILE)"
-  echo "      首次使用时请先填写 config.json / svn-mapping.json / verification.json"
+elif [[ ! -f "$JIRA_FILE" || ! -f "$MAPPING_FILE" ]]; then
+  echo "跳过：未找到本地配置"
+  echo "      请先填写 jira-config.json 和 svn-mapping.json"
+elif [[ "$CONFIG_CHANGED" == true ]]; then
+  echo "跳过：本次刚生成或覆盖了示例配置"
+  echo "      请先按实际环境修改 jira-config.json 和 svn-mapping.json"
+  echo "      修改完成后重新运行安装脚本，或手动执行校验脚本"
+elif is_example_config "$JIRA_EXAMPLE" "$JIRA_FILE" || is_example_config "$MAPPING_EXAMPLE" "$MAPPING_FILE"; then
+  echo "跳过：检测到当前仍是示例配置"
+  echo "      请先按实际环境修改 jira-config.json 和 svn-mapping.json"
+  echo "      修改完成后重新运行安装脚本，或手动执行校验脚本"
+elif config_needs_setup "$JIRA_FILE" "$MAPPING_FILE"; then
+  echo "跳过：检测到配置里仍有占位示例内容"
+  echo "      请先按实际环境修改 jira-config.json 和 svn-mapping.json"
+  echo "      修改完成后重新运行安装脚本，或手动执行校验脚本"
+elif [[ "$DRY_RUN" == true ]]; then
+  echo "  [dry-run] python $VALIDATOR"
 else
   echo "  python $VALIDATOR"
-  if [[ "$DRY_RUN" == true ]]; then
-    echo "  [dry-run] python $VALIDATOR"
-  elif python "$VALIDATOR"; then
+  if python "$VALIDATOR"; then
     echo "  配置校验通过"
   else
-    echo "  警告: daily-workflow 配置校验未通过，请按提示修正后再使用"
+    echo "  警告：配置校验未通过，请按提示修正后再使用"
   fi
 fi
 
-# ── 完成 ───────────────────────────────────────────────────
 echo ""
 if [[ "$DRY_RUN" == true ]]; then
   echo "[dry-run] 预览完成，使用 bash install.sh 正式安装"

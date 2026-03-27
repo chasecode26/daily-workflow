@@ -1,6 +1,6 @@
 import base64
 import json
-import os
+from pathlib import Path
 import re
 import sys
 import urllib.error
@@ -14,6 +14,21 @@ TRANSITION_CHAINS = {
   "缺陷": ["开放", "开发中", "已解决"]
 }
 TIMEOUT = 10
+ROOT = Path(__file__).resolve().parents[2]
+REPO_SKILL_DIR = ROOT / "claude-assets" / "skills" / "daily-workflow"
+USER_SKILL_DIR = Path.home() / ".claude" / "skills" / "daily-workflow"
+
+
+def resolve_example_file(filename):
+  user_path = USER_SKILL_DIR / filename
+  if user_path.exists():
+    return user_path
+
+  return REPO_SKILL_DIR / filename
+
+
+JIRA_CONFIG_PATH = USER_SKILL_DIR / "jira-config.json"
+JIRA_CONFIG_EXAMPLE = resolve_example_file("jira-config.example.json")
 
 
 def load_payload():
@@ -168,12 +183,44 @@ def normalize_api_path(api_path):
   value = (api_path or "").strip()
   if not value:
     return "/rest/api/2"
-  match = re.search(r"(/rest/api/\d+)$", value)
-  if match:
-    return match.group(1)
   if value.startswith("/"):
     return value.rstrip("/")
-  return "/rest/api/2"
+  return "/" + value.rstrip("/")
+
+
+def load_jira_config():
+  if not JIRA_CONFIG_PATH.exists():
+    raise RuntimeError(
+      f"未找到 JIRA 配置文件：{JIRA_CONFIG_PATH}。请先参考 {JIRA_CONFIG_EXAMPLE.name} 创建 jira-config.json。"
+    )
+
+  try:
+    config = json.loads(JIRA_CONFIG_PATH.read_text(encoding="utf-8"))
+  except json.JSONDecodeError as error:
+    raise RuntimeError(f"JIRA 配置文件不是合法 JSON：{error}") from error
+
+  base_url = str(config.get("baseUrl", "")).strip().rstrip("/")
+  username = str(config.get("username", "")).strip()
+  password = str(config.get("password", "")).strip()
+  api_path = normalize_api_path(str(config.get("apiPath", "/rest/api/2")))
+
+  try:
+    timeout = int(config.get("timeout", TIMEOUT))
+  except (TypeError, ValueError) as error:
+    raise RuntimeError("jira-config.json 中 timeout 必须是正整数。") from error
+
+  if timeout <= 0:
+    raise RuntimeError("jira-config.json 中 timeout 必须大于 0。")
+  if not base_url or not username or not password:
+    raise RuntimeError("jira-config.json 缺少 baseUrl、username 或 password。")
+
+  return {
+    "baseUrl": base_url,
+    "username": username,
+    "password": password,
+    "apiPath": api_path,
+    "timeout": timeout
+  }
 
 
 def main():
@@ -186,19 +233,20 @@ def main():
   if not issue_keys:
     return
 
-  base_url = os.environ.get("JIRA_BASE_URL", "").strip()
-  username = os.environ.get("JIRA_USERNAME", "").strip()
-  password = os.environ.get("JIRA_PASSWORD", "").strip()
-  api_path = normalize_api_path(os.environ.get("JIRA_API_PATH", "/rest/api/2"))
-  if not base_url or not username or not password:
-    print(json.dumps({"systemMessage": "SVN 已提交，但未执行 JIRA 自动流转：JIRA 环境变量未配置完整。"}, ensure_ascii=False))
+  try:
+    jira_config = load_jira_config()
+  except Exception as error:
+    print(json.dumps({"systemMessage": f"SVN 已提交，但未执行 JIRA 自动流转：{error}"}, ensure_ascii=False))
     return
 
-  headers = build_headers(username, password)
+  global TIMEOUT
+  TIMEOUT = jira_config["timeout"]
+
+  headers = build_headers(jira_config["username"], jira_config["password"])
   results = []
   for issue_key in issue_keys:
     try:
-      results.append(run_chain(headers, base_url, api_path, issue_key))
+      results.append(run_chain(headers, jira_config["baseUrl"], jira_config["apiPath"], issue_key))
     except urllib.error.HTTPError as error:
       results.append({
         "issueKey": issue_key,

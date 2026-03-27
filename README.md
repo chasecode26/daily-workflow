@@ -1,150 +1,216 @@
 # daily-workflow
 
-项目级 Claude Code `daily-workflow` 配置仓库。
+`daily-workflow` 是给 Claude Code 用的日常缺陷处理配置，解决四件事：
 
-## 仓库目标
+- 从 JIRA 拉取当前待处理 issue
+- 把 issue 映射到本机 SVN 工作副本
+- 辅助完成代码修改与验证
+- 在 `svn commit` 成功后自动推进 JIRA 状态
 
-把 `daily-workflow` 相关的 Claude Code 配置集中管理，并与个人本地私有配置分离。
+仓库只保存可共享的脚本和模板。账号、密码、机器路径统一放本地 JSON，不进 git。
 
-## 仓库结构
+## 目录
 
 ```text
 .
-├─ .claude/
-│  ├─ settings.json          # hooks 入口 + MCP 启用
-│  └─ settings.local.json    # 本地覆盖（不提交）
-├─ .mcp.json                 # MCP 入口
-├─ .gitignore
-├─ install.sh                # 一键安装脚本
-├─ install.ps1               # Windows / PowerShell 安装脚本
-├─ jira-mcp/                 # JIRA MCP server
+├─ .claude/settings.json
+├─ .mcp.json
+├─ install.sh
+├─ install.ps1
+├─ jira-mcp/
 │  ├─ server.py
 │  ├─ jira_client.py
 │  ├─ config.py
 │  └─ requirements.txt
 └─ claude-assets/
-   ├─ hooks/
-   │  └─ svn_jira_transition_hook.py
-   ├─ mcp/
-   │  └─ mcp.template.json
-   └─ skills/
-      └─ daily-workflow/
-         ├─ SKILL.md
-         ├─ config.json                # 本地私有配置，不提交
-         ├─ svn-mapping.json           # JIRA -> 本地 SVN 映射，不提交
-         ├─ verification.json          # 验证命令配置，不提交
-         └─ jira-status-map.md
+   ├─ hooks/svn_jira_transition_hook.py
+   ├─ mcp/mcp.template.json
+   └─ skills/daily-workflow/
+      ├─ SKILL.md
+      ├─ jira-config.example.json
+      ├─ svn-mapping.example.json
+      ├─ jira-status-map.md
+      └─ validate_daily_workflow_config.py
 ```
 
 ## 快速开始
 
 ```bash
-# 1. 克隆仓库
 git clone <repo-url> D:/git/daily-workflow
 cd D:/git/daily-workflow
-
-# 2. 配置环境变量（必填）
-export JIRA_BASE_URL=https://jira.example.com
-export JIRA_USERNAME=your_username
-export JIRA_PASSWORD=your_password
-# 可选
-export JIRA_API_PATH=/rest/api/2
-export JIRA_TIMEOUT=20
-
-# 3. 填写本地配置
-# claude-assets/skills/daily-workflow/config.json
-# claude-assets/skills/daily-workflow/svn-mapping.json
-# claude-assets/skills/daily-workflow/verification.json
-
-# 4. 一键安装（安装技能 + MCP 依赖 + 检查环境 + 配置校验）
-bash install.sh
-
-# 5. 在 Claude Code 中打开此目录使用
 ```
 
-Windows / PowerShell 可使用：
+Linux / macOS:
+```bash
+bash install.sh
+```
 
+Windows / PowerShell:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` 与 `install.ps1` 都支持 dry-run 预览。
+仅预览，不落盘：
 
-## 当前工作流
+```bash
+bash install.sh --dry-run
+```
 
-### daily-workflow
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+```
 
-技能位置：`claude-assets/skills/daily-workflow/SKILL.md`
+安装脚本会：
+- 安装 `jira-mcp` 依赖
+- 把 skill 同步到 `~/.claude/skills/daily-workflow/`
+- 在该目录生成本地配置文件
+- 若本地配置已存在，会询问是否用示例覆盖
+- 执行配置校验
 
-能力：
-- 拉取我的 JIRA 列表，选择单个 issue
-- 匹配本地 SVN 工作目录
-- 先验证，再提交 SVN
-- SVN 成功后自动推进 JIRA 状态
+## 本地配置
 
-JIRA 状态流转规则（`jira-status-map.md`）：
+只需要填两个文件。
+
+实际配置目录：
+
+```text
+~/.claude/skills/daily-workflow/
+```
+
+### `jira-config.json`
+
+用途：
+- 配置 JIRA 连接信息
+- 配置 daily-workflow 默认查询条件
+- 供 `jira-mcp` 和 `svn_jira_transition_hook.py` 共用
+
+核心字段：
+
+```json
+{
+  "baseUrl": "https://jira.example.com",
+  "username": "your_username",
+  "password": "your_password",
+  "apiPath": "/rest/api/2",
+  "timeout": 20,
+  "projects": ["IMCP", "KINGE"],
+  "assignee": "currentUser()",
+  "workingStatuses": ["开放", "开发中"]
+}
+```
+
+字段说明：
+- `baseUrl`：JIRA 根地址
+- `username` / `password`：登录凭据
+- `apiPath`：通常保持 `/rest/api/2`
+- `timeout`：接口超时秒数
+- `projects`：默认拉取的项目 key
+- `assignee`：默认责任人筛选
+- `workingStatuses`：待办列表展示的状态
+
+### `svn-mapping.json`
+
+用途：
+- 把 JIRA 项目、组件、关键词映射到本机 SVN 路径
+- 让 daily-workflow 能直接找到应该进入的工作目录
+
+推荐示例：
+
+```json
+{
+  "mappings": [
+    {
+      "projectName": "一体化平台",
+      "componentName": "权限管理",
+      "keywords": ["登录", "菜单", "权限"],
+      "frontendPath": "D:/svn/imcp/web",
+      "backendPath": "D:/svn/imcp/service",
+      "rootPath": "D:/svn/imcp"
+    },
+    {
+      "projectName": "金格协同",
+      "componentName": "",
+      "keywords": ["流程", "表单"],
+      "frontendPath": "",
+      "backendPath": "",
+      "rootPath": "D:/svn/kinge"
+    }
+  ]
+}
+```
+
+填写建议：
+- `projectName` 尽量和 JIRA 项目名称保持一致
+- `componentName` 留空表示整项目共用一条映射
+- `keywords` 只在项目和组件不够区分时再加
+- `frontendPath`、`backendPath`、`rootPath` 至少填一个真实存在的路径
+
+## 工作流
+
+`jira-mcp/server.py` 提供 `jira-local` MCP server。
+它会直接读取 `jira-config.json`，不再依赖环境变量。
+
+`daily-workflow` skill 会按下面顺序匹配：
+1. `projectName`
+2. `componentName`
+3. `keywords`
+
+匹配成功后，优先进入最合适的本地 SVN 工作目录再继续分析代码。
+
+Hook 脚本：`claude-assets/hooks/svn_jira_transition_hook.py`
+会在 `svn commit` / `svn ci` 成功后：
+- 提取 JIRA key
+- 读取 `jira-config.json`
+- 查询当前状态
+- 按预定义链路推进
+
+默认状态链：
 - 任务：`开放 -> 开发中 -> 提交测试`
 - 缺陷：`开放 -> 开发中 -> 已解决`
 
-本地配置文件：
-- `claude-assets/skills/daily-workflow/config.json`
-  用来配置 JIRA 项目范围、assignee 默认值、以及另外两个本地配置文件入口。
-- `claude-assets/skills/daily-workflow/svn-mapping.json`
-  用来配置 JIRA 项目/组件/关键词 到本机 SVN 工作副本路径的映射。
-- `claude-assets/skills/daily-workflow/verification.json`
-  用来配置不同 `verificationProfile` 对应的测试、构建、smoke 命令。
+## 校验与排错
 
-模板文件：
-- `config.example.json`
-- `svn-mapping-template.json`
-- `verification.template.json`
-  仅作为结构参考；安装脚本会在本地配置缺失时自动初始化 `config.json`、`svn-mapping.json`、`verification.json`。
-
-### SVN 后自动流转 hook
-
-脚本：`claude-assets/hooks/svn_jira_transition_hook.py`
-触发：`svn commit` / `svn ci` 成功后，从命令中提取 JIRA key，按预定义链路自动流转。
-说明：当前 hook 命令已去掉 Unix shell 专用的重定向与 `|| true`，避免在 Windows / PowerShell 环境下行为不一致。
-
-### JIRA MCP
-
-`jira-mcp/server.py` 提供 `jira-local` MCP server，通过 `.mcp.json` 注册到 Claude Code。
-依赖通过 `install.sh` 自动安装。
-`.mcp.json` 与 `claude-assets/mcp/mcp.template.json` 均已透传 `JIRA_TIMEOUT`。
-
-### 配置校验
-
-校验脚本：`claude-assets/skills/daily-workflow/validate_daily_workflow_config.py`
-
-用途：
-- 检查 `config.json`、`svn-mapping.json`、`verification.json` 是否存在且为合法 JSON
-- 检查 `svnMappingFile` / `verificationProfileFile` 引用是否存在
-- 检查每条 mapping 的 `verificationProfile` 是否能在 `verification.json` 中找到
-- 检查配置中的本地路径是否真实存在
-
-手动运行：
+手动校验命令：
 
 ```bash
 python claude-assets/skills/daily-workflow/validate_daily_workflow_config.py
 ```
 
-## git 提交约定
+会检查：
+- `jira-config.json` 是否存在且 JSON 合法
+- JIRA 必填字段是否填写完整
+- `svn-mapping.json` 是否存在且 JSON 合法
+- 每条映射是否至少配置了一个路径
+- 配置里的路径在本机上是否真实存在
 
-适合提交：
-- `.claude/settings.json`、`.mcp.json`、`.gitignore`
-- `jira-mcp/**`、`claude-assets/**`、`install.sh`
+常见失败原因：
+- `baseUrl`、`username`、`password` 没填
+- `projects` 或 `workingStatuses` 为空
+- `svn-mapping.json` 里填的是示例路径，没有改成真实路径
+- `apiPath` 没有以 `/` 开头
+
+首次安装说明：
+- 如果脚本刚生成或刚覆盖了示例配置，会直接跳过校验
+- 如果检测到当前配置仍与示例完全一致，也会跳过校验
+- 如果检测到明显的占位内容，也会跳过校验并提示先改配置
+- 这时应先去 `~/.claude/skills/daily-workflow/` 修改两个 JSON
+- 改完后再重新运行安装脚本，或单独运行校验命令
+
+## 提交约定
+
+可以提交：
+- `.claude/settings.json`
+- `.mcp.json`
+- `jira-mcp/**`
+- `claude-assets/**`
+- `install.sh`
+- `install.ps1`
 
 不要提交：
 - `.claude/settings.local.json`
 - 明文账号、密码、token
 - 个人机器专用路径
 
-## 环境变量
+## 一句话
 
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `JIRA_BASE_URL` | 是 | JIRA 地址，如 `https://jira.example.com` |
-| `JIRA_USERNAME` | 是 | 登录用户名 |
-| `JIRA_PASSWORD` | 是 | 登录密码 |
-| `JIRA_API_PATH` | 否 | 默认 `/rest/api/2` |
-| `JIRA_TIMEOUT` | 否 | 默认 `20`（秒） |
+先运行安装脚本，让它把配置生成到 `~/.claude/skills/daily-workflow/`，再修改 `jira-config.json` 和 `svn-mapping.json`，最后重新校验。

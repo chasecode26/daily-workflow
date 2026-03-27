@@ -35,12 +35,11 @@ Do not use when:
 ## Required Local Files
 
 Read these files before starting:
-- `config.json` for the real local workflow config
+- `jira-config.json` for the real JIRA connection info and default filters
 - `svn-mapping.json` for the real JIRA to local SVN path mapping
-- `verification.json` for the real validation profiles and commands
 - `jira-status-map.md` for allowed resolve transitions
 
-Use `config.example.json` and `svn-mapping-template.json` only as structure references when the real local files are missing.
+Use `jira-config.example.json` and `svn-mapping.example.json` only as structure references when the real local files are missing.
 
 ## Workflow
 
@@ -50,9 +49,9 @@ Unless the user gives a specific JIRA key like `BUG-12345`, start by pulling **m
 ### 2. Pull and display issues
 Use `jira-mcp` first. If needed, use browser fallback.
 Default filters should prefer:
-- assignee = me
-- project in `KINGE`, `IMCP`
-- status in configured working states
+- assignee = `jira-config.json` 中的 `assignee`
+- project in `jira-config.json` 中的 `projects`
+- status in `jira-config.json` 中的 `workingStatuses`
 
 Show only:
 - JIRA key
@@ -85,7 +84,6 @@ If no mapping matches, ask whether to save a new mapping before writing config.
 After mapping succeeds:
 - surface `frontendPath` if present
 - surface `backendPath` if present
-- choose verification profile from config
 - open or enter the matched path first
 - then search code using issue title, component keywords, labels, or API clues
 
@@ -94,7 +92,7 @@ Prefer in this order:
 1. existing automated test command
 2. build command
 3. startup + smoke validation
-4. browser login validation only if the profile explicitly supports it
+4. browser login validation only when the project already has a stable local workflow
 
 If verification cannot run, explain why and downgrade to manual verification pending.
 

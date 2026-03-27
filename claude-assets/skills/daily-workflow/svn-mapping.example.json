@@ -1,0 +1,31 @@
+{
+  "_comment": "JIRA -> 本地 SVN 路径映射示例。复制为 svn-mapping.json 后，按你的真实工作副本路径修改。",
+  "_howToConfigure": [
+    "每个 mapping 代表一类工单应该落到哪个本地 SVN 目录。",
+    "projectName: 必填，建议填写 JIRA 项目名称。",
+    "componentName: 选填。为空表示整个项目共用；填写后优先匹配该组件。",
+    "keywords: 选填。用于标题/描述辅助匹配。",
+    "frontendPath/backendPath/rootPath: 按你的真实 SVN 工作副本路径填写，没有就留空字符串。",
+    "至少保证 frontendPath、backendPath、rootPath 其中一个非空。"
+  ],
+  "mappings": [
+    {
+      "_comment": "示例1：前后端分离项目",
+      "projectName": "一体化平台",
+      "componentName": "权限管理",
+      "keywords": ["登录", "菜单", "权限"],
+      "frontendPath": "D:/svn/imcp/web",
+      "backendPath": "D:/svn/imcp/service",
+      "rootPath": "D:/svn/imcp"
+    },
+    {
+      "_comment": "示例2：只有单仓目录的项目",
+      "projectName": "金格协同",
+      "componentName": "",
+      "keywords": ["流程", "表单"],
+      "frontendPath": "",
+      "backendPath": "",
+      "rootPath": "D:/svn/kinge"
+    }
+  ]
+}

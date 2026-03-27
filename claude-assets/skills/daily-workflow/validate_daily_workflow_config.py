@@ -3,22 +3,18 @@ from pathlib import Path
 import sys
 
 
-ROOT = Path(__file__).resolve().parents[3]
-SKILL_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = SKILL_DIR / "config.json"
+USER_SKILL_DIR = Path.home() / ".claude" / "skills" / "daily-workflow"
+JIRA_CONFIG_PATH = USER_SKILL_DIR / "jira-config.json"
+MAPPING_PATH = USER_SKILL_DIR / "svn-mapping.json"
 
 
 def load_json(path: Path) -> tuple[dict | None, str | None]:
     if not path.exists():
-        return None, f"missing file: {path}"
+        return None, f"缺少文件: {path}"
     try:
         return json.loads(path.read_text(encoding="utf-8")), None
     except json.JSONDecodeError as error:
-        return None, f"invalid json: {path} :: {error}"
-
-
-def resolve_from_root(raw_path: str) -> Path:
-    return (ROOT / raw_path).resolve()
+        return None, f"JSON 非法: {path} :: {error}"
 
 
 def normalize_path(raw_path: str) -> Path | None:
@@ -31,68 +27,71 @@ def normalize_path(raw_path: str) -> Path | None:
 def validate() -> list[str]:
     errors: list[str] = []
 
-    config, error = load_json(CONFIG_PATH)
+    jira_config, error = load_json(JIRA_CONFIG_PATH)
     if error:
         return [error]
 
-    jira = config.get("jira") or {}
-    projects = jira.get("projects") or []
+    for field_name in ("baseUrl", "username", "password"):
+        value = str(jira_config.get(field_name, "")).strip()
+        if not value:
+            errors.append(f"jira-config.json: {field_name} 为必填项")
+
+    projects = jira_config.get("projects") or []
     if not isinstance(projects, list) or not projects:
-        errors.append("config.json: jira.projects must be a non-empty list")
+        errors.append("jira-config.json: projects 必须是非空数组")
 
-    mapping_file = config.get("svnMappingFile")
-    verification_file = config.get("verificationProfileFile")
-    if not isinstance(mapping_file, str) or not mapping_file.strip():
-        errors.append("config.json: svnMappingFile is required")
-    if not isinstance(verification_file, str) or not verification_file.strip():
-        errors.append("config.json: verificationProfileFile is required")
+    assignee = str(jira_config.get("assignee", "")).strip()
+    if not assignee:
+        errors.append("jira-config.json: assignee 为必填项")
+
+    working_statuses = jira_config.get("workingStatuses") or []
+    if not isinstance(working_statuses, list) or not working_statuses:
+        errors.append("jira-config.json: workingStatuses 必须是非空数组")
+
+    timeout = jira_config.get("timeout", 20)
+    try:
+        timeout_value = int(timeout)
+    except (TypeError, ValueError):
+        errors.append("jira-config.json: timeout 必须是正整数")
+    else:
+        if timeout_value <= 0:
+            errors.append("jira-config.json: timeout 必须大于 0")
+
+    api_path = str(jira_config.get("apiPath", "")).strip()
+    if api_path and not api_path.startswith("/"):
+        errors.append("jira-config.json: apiPath 必须以 / 开头")
+
+    mappings_data, error = load_json(MAPPING_PATH)
+    if error:
+        errors.append(error)
+        return errors
+
     if errors:
-        return errors
-
-    mapping_path = resolve_from_root(mapping_file)
-    verification_path = resolve_from_root(verification_file)
-
-    mappings_data, error = load_json(mapping_path)
-    if error:
-        errors.append(error)
-        return errors
-
-    verification_data, error = load_json(verification_path)
-    if error:
-        errors.append(error)
-        return errors
-
-    profiles = (verification_data.get("profiles") or {})
-    if not isinstance(profiles, dict) or not profiles:
-        errors.append("verification.json: profiles must be a non-empty object")
         return errors
 
     mappings = mappings_data.get("mappings") or []
     if not isinstance(mappings, list) or not mappings:
-        errors.append("svn-mapping.json: mappings must be a non-empty list")
+        errors.append("svn-mapping.json: mappings 必须是非空数组")
         return errors
 
     for index, mapping in enumerate(mappings, start=1):
         label = f"svn-mapping.json: mappings[{index}]"
         project_name = (mapping.get("projectName") or "").strip()
-        profile_name = (mapping.get("verificationProfile") or "").strip()
         if not project_name:
-            errors.append(f"{label}: projectName is required")
-        if not profile_name:
-            errors.append(f"{label}: verificationProfile is required")
-        elif profile_name not in profiles:
-            errors.append(f"{label}: verificationProfile '{profile_name}' not found in verification.json")
+            errors.append(f"{label}: projectName 为必填项")
 
         root_path = normalize_path(mapping.get("rootPath", ""))
         frontend_path = normalize_path(mapping.get("frontendPath", ""))
         backend_path = normalize_path(mapping.get("backendPath", ""))
 
+        if not any((root_path, frontend_path, backend_path)):
+            errors.append(f"{label}: rootPath、frontendPath、backendPath 至少要填写一个")
         if root_path and not root_path.exists():
-            errors.append(f"{label}: rootPath does not exist -> {root_path}")
+            errors.append(f"{label}: rootPath 不存在 -> {root_path}")
         if frontend_path and not frontend_path.exists():
-            errors.append(f"{label}: frontendPath does not exist -> {frontend_path}")
+            errors.append(f"{label}: frontendPath 不存在 -> {frontend_path}")
         if backend_path and not backend_path.exists():
-            errors.append(f"{label}: backendPath does not exist -> {backend_path}")
+            errors.append(f"{label}: backendPath 不存在 -> {backend_path}")
 
     return errors
 
@@ -100,12 +99,12 @@ def validate() -> list[str]:
 def main() -> int:
     errors = validate()
     if errors:
-        print("daily-workflow config validation failed:")
+        print("daily-workflow 配置校验失败：")
         for item in errors:
             print(f"- {item}")
         return 1
 
-    print("daily-workflow config validation passed")
+    print("daily-workflow 配置校验通过")
     return 0
 
 

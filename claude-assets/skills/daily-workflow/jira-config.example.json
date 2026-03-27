@@ -1,0 +1,20 @@
+{
+  "_comment": "JIRA 连接与 daily-workflow 默认筛选配置示例。复制为 jira-config.json 后再填入真实账号密码，不要把本机私有配置提交到 git。",
+  "_howToConfigure": [
+    "baseUrl: JIRA 地址，例如 https://jira.example.com。",
+    "username/password: 你的登录账号与密码。",
+    "apiPath: 通常保持 /rest/api/2，不确定就别改。",
+    "timeout: 接口超时时间，单位秒。",
+    "projects: 日常要拉取的 JIRA 项目 key 列表。",
+    "assignee: 默认 currentUser()，表示拉当前登录人的 issue。",
+    "workingStatuses: daily-workflow 列表里要展示的状态。"
+  ],
+  "baseUrl": "https://jira.example.com",
+  "username": "your_username",
+  "password": "your_password",
+  "apiPath": "/rest/api/2",
+  "timeout": 20,
+  "projects": ["IMCP", "KINGE"],
+  "assignee": "currentUser()",
+  "workingStatuses": ["开放", "开发中"]
+}

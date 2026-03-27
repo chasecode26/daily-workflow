@@ -1,7 +1,6 @@
 .claude/settings.local.json
-claude-assets/skills/daily-workflow/config.json
+claude-assets/skills/daily-workflow/jira-config.json
 claude-assets/skills/daily-workflow/svn-mapping.json
-claude-assets/skills/daily-workflow/verification.json
 jira-mcp/.claude/
 __pycache__/
 *.pyc
