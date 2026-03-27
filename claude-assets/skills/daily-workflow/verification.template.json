@@ -1,0 +1,18 @@
+{
+  "_comment": "verification.json 的结构参考。真实使用时请复制或对照此文件填写本地 verification.json，不要把本机私有命令提交到 git。",
+  "_howToConfigure": [
+    "profiles 下每个 key 都是一个可复用验证方案，例如 default、frontend、backend。",
+    "testCommand: 优先执行的自动化测试命令。",
+    "buildCommand: 测试之外的构建命令。",
+    "smokeCommand: 启动后或构建后的基础冒烟验证命令。",
+    "没有对应命令就填空字符串，不要乱写占位命令。"
+  ],
+  "profiles": {
+    "default": {
+      "description": "通用默认验证方案",
+      "testCommand": "",
+      "buildCommand": "",
+      "smokeCommand": ""
+    }
+  }
+}

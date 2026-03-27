@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键安装：技能 + MCP 依赖 + 环境变量检查
+# 一键安装：技能 + MCP 依赖 + 环境变量检查 + 本地配置初始化/校验
 # 用法: bash install.sh [--dry-run]
 
 set -euo pipefail
@@ -13,6 +13,21 @@ run() {
     echo "  [dry-run] $*"
   else
     "$@"
+  fi
+}
+
+copy_if_missing() {
+  local src="$1"
+  local dst="$2"
+  if [[ -f "$dst" ]]; then
+    echo "  [已存在] $dst"
+  elif [[ ! -f "$src" ]]; then
+    echo "  [缺失模板] $src"
+  elif [[ "$DRY_RUN" == true ]]; then
+    echo "  [dry-run] cp \"$src\" \"$dst\""
+  else
+    cp "$src" "$dst"
+    echo "  [已初始化] $dst"
   fi
 }
 
@@ -92,6 +107,42 @@ if [[ -f "$HOOK" ]]; then
   echo "       已通过 .claude/settings.json 引用，无需额外安装"
 else
   echo "  [缺失] $HOOK"
+fi
+
+# ── 5. 初始化本地 daily-workflow 配置 ─────────────────────
+SKILL_DIR="$SCRIPT_DIR/claude-assets/skills/daily-workflow"
+CONFIG_TEMPLATE="$SKILL_DIR/config.example.json"
+MAPPING_TEMPLATE="$SKILL_DIR/svn-mapping-template.json"
+VERIFY_TEMPLATE="$SKILL_DIR/verification.template.json"
+CONFIG_FILE="$SKILL_DIR/config.json"
+MAPPING_FILE="$SKILL_DIR/svn-mapping.json"
+VERIFY_FILE="$SKILL_DIR/verification.json"
+
+echo ""
+echo "=== 初始化 daily-workflow 配置 ==="
+copy_if_missing "$CONFIG_TEMPLATE" "$CONFIG_FILE"
+copy_if_missing "$MAPPING_TEMPLATE" "$MAPPING_FILE"
+copy_if_missing "$VERIFY_TEMPLATE" "$VERIFY_FILE"
+
+# ── 6. 本地 daily-workflow 配置校验 ───────────────────────
+VALIDATOR="$SCRIPT_DIR/claude-assets/skills/daily-workflow/validate_daily_workflow_config.py"
+
+echo ""
+echo "=== 检查 daily-workflow 配置 ==="
+if [[ ! -f "$VALIDATOR" ]]; then
+  echo "跳过：未找到校验脚本 ($VALIDATOR)"
+elif [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "跳过：未找到本地配置 ($CONFIG_FILE)"
+  echo "      首次使用时请先填写 config.json / svn-mapping.json / verification.json"
+else
+  echo "  python $VALIDATOR"
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "  [dry-run] python $VALIDATOR"
+  elif python "$VALIDATOR"; then
+    echo "  配置校验通过"
+  else
+    echo "  警告: daily-workflow 配置校验未通过，请按提示修正后再使用"
+  fi
 fi
 
 # ── 完成 ───────────────────────────────────────────────────

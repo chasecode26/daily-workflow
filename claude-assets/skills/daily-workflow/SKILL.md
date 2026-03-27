@@ -1,27 +1,27 @@
 ---
-name: daily-bug-workflow
-description: Use when handling day-to-day bugfix work that starts from internal JIRA, requires mapping project/component to local SVN paths, and needs SVN submission plus JIRA status transitions for task or defect workflows.
+name: daily-workflow
+description: Use for the daily-workflow JIRA -> local SVN flow, including issue selection, path mapping, verification, SVN submission, and JIRA status transitions.
 ---
 
-# Daily Bug Workflow
+# daily-workflow
 
 ## Overview
 
-Standardize the daily bugfix flow for JIRA-driven work:
-1. Pull **my** candidate bugs by assignee and project
-2. Let the user select one bug
+Standardize the `daily-workflow` flow for JIRA-driven work:
+1. Pull **my** candidate issues by assignee and project
+2. Let the user select one issue
 3. Resolve local frontend/backend SVN paths from config
 4. Open the matched workspace and begin code search/editing
 5. Run the best available automated verification
 6. Commit the code to SVN when the user asks
 7. Transition JIRA in the correct order after SVN submission
 
-**Core principle:** Default to the real daily sequence: pull my JIRA list, choose one bug, open the right local path, verify, submit SVN, then advance JIRA to the next required state.
+**Core principle:** Default to the real daily-workflow sequence: pull my JIRA list, choose one issue, open the right local path, verify, submit SVN, then advance JIRA to the next required state.
 
 ## When to Use
 
 Use when:
-- The user wants to process daily bugs from internal JIRA
+- The user wants to process daily issues from internal JIRA
 - The issue must be located through project + component mapping
 - The local code is managed in SVN
 - The workflow should open the right frontend/backend directory automatically
@@ -30,24 +30,24 @@ Use when:
 Do not use when:
 - The task does not start from JIRA
 - The user already gave an exact local path and only wants a code edit
-- The task is bulk triage across many bugs
+- The task is bulk triage across many issues
 
 ## Required Local Files
 
 Read these files before starting:
-- `config.example.json` for overall config shape
-- `svn-mapping-template.json` for path mapping structure
-- `verification-template.json` for validation profiles
+- `config.json` for the real local workflow config
+- `svn-mapping.json` for the real JIRA to local SVN path mapping
+- `verification.json` for the real validation profiles and commands
 - `jira-status-map.md` for allowed resolve transitions
 
-If real project-local config exists later, prefer the real config over templates.
+Use `config.example.json` and `svn-mapping-template.json` only as structure references when the real local files are missing.
 
 ## Workflow
 
 ### 1. Default to "my JIRA" list mode
-Unless the user gives a specific JIRA key like `BUG-12345`, start by pulling **my current bug list** with assignee + project filters.
+Unless the user gives a specific JIRA key like `BUG-12345`, start by pulling **my current issue list** with assignee + project filters.
 
-### 2. Pull and display bugs
+### 2. Pull and display issues
 Use `jira-mcp` first. If needed, use browser fallback.
 Default filters should prefer:
 - assignee = me
@@ -65,8 +65,8 @@ Show only:
 Keep the list compact so the user can choose quickly.
 
 ### 3. Confirm issue selection
-In list mode, always stop and ask the user to choose exactly one bug.
-Do not skip straight into path matching when more than one bug is present.
+In list mode, always stop and ask the user to choose exactly one issue.
+Do not skip straight into path matching when more than one issue is present.
 
 ### 4. Direct issue mode
 If the user gives a JIRA key like `BUG-12345`, skip the list and load that issue directly.
@@ -144,7 +144,7 @@ Rules:
 Keep responses short and structured.
 
 ### A. JIRA list mode
-When showing candidate bugs, prefer one compact line per issue:
+When showing candidate issues, prefer one compact line per issue:
 - `KEY | 标题 | 项目 | 组件 | 状态 | frontend/backend/fullstack`
 
 Then stop and ask the user to choose exactly one key.

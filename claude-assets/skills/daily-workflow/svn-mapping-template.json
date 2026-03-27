@@ -1,0 +1,23 @@
+{
+  "_comment": "svn-mapping.json 的结构参考。真实使用时请复制或对照此文件填写本地 svn-mapping.json，不要把本机私有路径提交到 git。",
+  "_howToConfigure": [
+    "一条 mapping 对应一类 issue 的本地代码位置。",
+    "projectName: 必填，填 JIRA 项目名称或 daily-workflow 实际用于匹配的项目字段。",
+    "componentName: 选填。留空表示整个项目共用；填写后表示优先匹配该组件。",
+    "keywords: 选填。用于项目和组件不足以区分时的补充匹配。",
+    "frontendPath/backendPath/rootPath: 填你本机真实 SVN 工作副本路径，没有就留空字符串。",
+    "verificationProfile: 必须能在 verification.json 的 profiles 中找到同名配置。"
+  ],
+  "mappings": [
+    {
+      "_comment": "最小示例。按需复制多条。",
+      "projectName": "YOUR_PROJECT_NAME",
+      "componentName": "",
+      "keywords": [],
+      "frontendPath": "D:/svn/your-project/frontend",
+      "backendPath": "D:/svn/your-project/backend",
+      "rootPath": "D:/svn/your-project",
+      "verificationProfile": "default"
+    }
+  ]
+}

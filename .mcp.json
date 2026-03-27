@@ -10,7 +10,8 @@
         "JIRA_BASE_URL": "${JIRA_BASE_URL}",
         "JIRA_USERNAME": "${JIRA_USERNAME}",
         "JIRA_PASSWORD": "${JIRA_PASSWORD}",
-        "JIRA_API_PATH": "${JIRA_API_PATH}"
+        "JIRA_API_PATH": "${JIRA_API_PATH}",
+        "JIRA_TIMEOUT": "${JIRA_TIMEOUT}"
       }
     }
   }
