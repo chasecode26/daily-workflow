@@ -21,16 +21,22 @@
 .claude/
   settings.json
   settings.local.json
-  claude-assets/
-    README.md
-    hooks/
-      svn_jira_transition_hook.py
-    mcp/
-      mcp.template.json
-    skills/
-      daily-bug-workflow/
-        SKILL.md
-        jira-status-map.md
+.mcp.json
+jira-mcp/
+  server.py
+  jira_client.py
+  config.py
+  requirements.txt
+claude-assets/
+  README.md
+  hooks/
+    svn_jira_transition_hook.py
+  mcp/
+    mcp.template.json
+  skills/
+    daily-bug-workflow/
+      SKILL.md
+      jira-status-map.md
 ```
 
 ## 子目录说明
@@ -66,7 +72,8 @@
 适合提交：
 - `/.claude/settings.json`
 - `/.mcp.json`
-- `/.claude/claude-assets/**`
+- `/jira-mcp/**`
+- `/claude-assets/**`
 
 不要提交：
 - `/.claude/settings.local.json`

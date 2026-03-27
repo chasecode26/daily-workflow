@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \".claude/claude-assets/hooks/svn_jira_transition_hook.py\" 2>/dev/null || true",
+            "command": "python \"claude-assets/hooks/svn_jira_transition_hook.py\" 2>/dev/null || true",
             "timeout": 20,
             "statusMessage": "同步 JIRA 状态"
           }
