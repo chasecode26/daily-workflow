@@ -3,10 +3,14 @@ from requests import Response
 
 from config import (
     JIRA_API_PATH,
+    JIRA_ASSIGNEE,
     JIRA_BASE_URL,
+    JIRA_ISSUE_TYPE_ALIASES,
     JIRA_PASSWORD,
+    JIRA_PROJECTS,
     JIRA_TIMEOUT,
     JIRA_USERNAME,
+    JIRA_WORKING_STATUSES,
 )
 
 
@@ -36,8 +40,34 @@ class JiraClient:
 
         if not response.content:
             return {}
-
         return response.json()
+
+    def _build_issue_type_jql(self, issue_type: str) -> str:
+        normalized = issue_type.strip().lower()
+        if normalized in ("", "all"):
+            return ""
+
+        if normalized not in JIRA_ISSUE_TYPE_ALIASES:
+            supported = ", ".join(sorted(JIRA_ISSUE_TYPE_ALIASES))
+            raise RuntimeError(f"Unsupported issueType '{issue_type}'. Supported values: all, {supported}")
+
+        values = ", ".join(f'"{item}"' for item in JIRA_ISSUE_TYPE_ALIASES[normalized])
+        return f"issuetype in ({values})"
+
+    def build_my_issues_jql(self, issue_type: str = "all") -> str:
+        project_clause = ", ".join(f'"{project}"' for project in JIRA_PROJECTS)
+        status_clause = ", ".join(f'"{status}"' for status in JIRA_WORKING_STATUSES)
+        clauses = [
+            f"assignee = {JIRA_ASSIGNEE}",
+            f"project in ({project_clause})",
+            f"status in ({status_clause})",
+        ]
+
+        issue_type_clause = self._build_issue_type_jql(issue_type)
+        if issue_type_clause:
+            clauses.append(issue_type_clause)
+
+        return " AND ".join(clauses) + " ORDER BY updated DESC"
 
     def search_issues(self, jql: str, max_results: int = 20) -> dict:
         response = self.session.get(
@@ -45,17 +75,20 @@ class JiraClient:
             params={
                 "jql": jql,
                 "maxResults": max_results,
-                "fields": "summary,status,priority,project,components,assignee",
+                "fields": "summary,status,priority,project,components,assignee,issuetype,updated",
             },
             timeout=JIRA_TIMEOUT,
         )
         return self._handle_response(response)
 
+    def search_my_issues(self, issue_type: str = "all", max_results: int = 20) -> dict:
+        return self.search_issues(self.build_my_issues_jql(issue_type), max_results)
+
     def get_issue(self, issue_key: str) -> dict:
         response = self.session.get(
             f"{self.base_api}/issue/{issue_key}",
             params={
-                "fields": "summary,description,status,priority,project,components,assignee,comment"
+                "fields": "summary,description,status,priority,project,components,assignee,comment,issuetype"
             },
             timeout=JIRA_TIMEOUT,
         )

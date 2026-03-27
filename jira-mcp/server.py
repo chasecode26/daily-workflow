@@ -19,10 +19,28 @@ def _normalize_issue(issue: dict) -> dict:
         "summary": fields.get("summary"),
         "status": (fields.get("status") or {}).get("name"),
         "priority": (fields.get("priority") or {}).get("name"),
+        "issueType": (fields.get("issuetype") or {}).get("name"),
+        "updated": fields.get("updated"),
         "projectKey": (fields.get("project") or {}).get("key"),
         "projectName": (fields.get("project") or {}).get("name"),
         "components": [item.get("name") for item in (fields.get("components") or [])],
         "assignee": _safe_name(fields.get("assignee")),
+    }
+
+
+@mcp.tool
+def get_my_issues(issueType: str = "all", maxResults: int = 20) -> dict:
+    """
+    Get my Jira issues using config defaults.
+    issueType supports: all, task, bug.
+    """
+    data = client.search_my_issues(issueType, maxResults)
+    issues = [_normalize_issue(item) for item in data.get("issues", [])]
+    return {
+        "issueType": issueType,
+        "total": data.get("total", 0),
+        "maxResults": data.get("maxResults", maxResults),
+        "issues": issues,
     }
 
 
@@ -55,6 +73,7 @@ def get_issue(issueKey: str) -> dict:
         "description": fields.get("description"),
         "status": (fields.get("status") or {}).get("name"),
         "priority": (fields.get("priority") or {}).get("name"),
+        "issueType": (fields.get("issuetype") or {}).get("name"),
         "projectKey": (fields.get("project") or {}).get("key"),
         "projectName": (fields.get("project") or {}).get("name"),
         "components": [item.get("name") for item in (fields.get("components") or [])],
