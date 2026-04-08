@@ -17,6 +17,7 @@
 
 ```text
 .
+├─ .codex/config.toml
 ├─ .claude/settings.json
 ├─ .mcp.json
 ├─ install.sh
@@ -71,15 +72,31 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
 安装脚本会做这些事：
 
 - 安装 `jira-mcp` 依赖
-- 把 skill 同步到 `~/.claude/skills/daily-workflow/`
+- 把 skill 同步到 `~/.codex/skills/daily-workflow/` 或 `~/.claude/skills/daily-workflow/`
 - 初始化本地 `jira-config.json` 和 `svn-mapping.json`
 - 校验配置合法性
+
+安装脚本会优先使用 `CODEX_HOME/skills` 或 `~/.codex/skills`，否则回退到 `~/.claude/skills`。也可以通过 `DAILY_WORKFLOW_SKILLS_HOME` 指定安装根目录。
+
+## Codex 接入
+
+项目内已提供 [`.codex/config.toml`](.codex/config.toml)，用于在 Codex 中自动注册 `jira-local` MCP。
+
+Codex 目前没有与 Claude Code `PostToolUse` 等价的自动 hook，所以 `svn commit` 之后如果你想继续自动推进 Jira 并生成日报/周报，需要手动执行：
+
+```bash
+python claude-assets/hooks/svn_jira_transition_hook.py --plain --cwd "<your-workspace>" --command 'svn commit -m "IMCP-123 fix xxx"'
+```
+
+如果你已经在 Claude Code 中使用本仓库，原有 [`.claude/settings.json`](.claude/settings.json) 里的 hook 仍然可用。
 
 ## 本地配置
 
 实际配置目录：
 
 ```text
+~/.codex/skills/daily-workflow/
+# or
 ~/.claude/skills/daily-workflow/
 ```
 
@@ -99,6 +116,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
   "baseUrl": "https://jira.example.com",
   "username": "your_username",
   "password": "your_password",
+  "token": "",
   "apiPath": "/rest/api/2",
   "timeout": 20,
   "projects": ["IMCP", "KINGE"],
@@ -107,22 +125,38 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
   "issueTypeAliases": {
     "task": ["任务", "Task", "Story", "需求"],
     "bug": ["缺陷", "Bug", "故障"]
-  },
-  "reportOutputDir": "~/.claude/skills/daily-workflow/reports"
+  }
 }
 ```
 
 字段说明：
 
 - `baseUrl`: Jira 根地址
-- `username` / `password`: 登录凭据
+- `username` / `password`: Basic Auth 登录凭据
+- `token`: 可选。若提供 `token`，或环境变量里存在 `JIRA_TOKEN`，则优先使用 Bearer Token 认证
 - `apiPath`: 通常保持 `/rest/api/2`
 - `timeout`: Jira 接口超时时间，单位秒
 - `projects`: 默认拉取的项目 key 列表
 - `assignee`: 默认负责人，通常是 `currentUser()`
 - `workingStatuses`: 待办列表展示的状态集合
 - `issueTypeAliases`: `task` / `bug` 映射到你们 Jira 实际单据类型名
-- `reportOutputDir`: 自动生成日报周报的目录
+- `reportOutputDir`: 自动生成日报周报的目录；不填写时默认落到当前技能目录下的 `reports/`
+
+认证优先级：
+
+- `JIRA_TOKEN` env > `jira-config.json.token`
+- 若没有 token，则回退到 `username` / `password`
+
+可选环境变量覆盖：
+
+- `JIRA_BASE_URL`
+- `JIRA_USERNAME`
+- `JIRA_PASSWORD`
+- `JIRA_TOKEN`
+- `JIRA_ASSIGNEE`
+- `JIRA_API_PATH`
+- `JIRA_TIMEOUT`
+- `DAILY_WORKFLOW_REPORT_DIR`
 
 ### `svn-mapping.json`
 
@@ -179,6 +213,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
 - `projects`
 - `workingStatuses`
 
+补充 MCP tool：
+
+- `jira-local.resolve_workspace(issueKey)`: 根据 `svn-mapping.json` 返回命中的 frontend/backend/rootPath 候选
+- `jira-local.plan_transition(issueKey)`: 在真正流转前，预览当前状态剩余链路与下一跳是否可执行
+
 ### 2. 选择事项并补充说明
 
 用户选中一个 Jira 后，workflow 需要继续收集：
@@ -193,6 +232,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
 1. `projectName`
 2. `componentName`
 3. `keywords`
+
+推荐先调用 `jira-local.resolve_workspace(issueKey)`，再根据返回结果决定进入哪个目录。
 
 匹配成功后优先进入最可能的前端或后端目录，再开始搜代码。
 
@@ -228,6 +269,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
 - 查询当前单据状态
 - 按类型推进 Jira 流转
 
+若要在提交前预判状态链，可先调用 `jira-local.plan_transition(issueKey)`。
+
 默认流转链：
 
 - 任务：`开放 -> 开发中 -> 提交测试`
@@ -256,7 +299,7 @@ SVN 提交成功后会记录事件，并生成：
 如需手动重建汇总：
 
 ```bash
-python claude-assets/skills/daily-workflow/generate_work_summary.py --report-dir "~/.claude/skills/daily-workflow/reports" --date 2026-03-27 --mode both
+python claude-assets/skills/daily-workflow/generate_work_summary.py --report-dir "<skill-home>/reports" --date 2026-03-27 --mode both
 ```
 
 ## 校验
@@ -294,4 +337,37 @@ python claude-assets/skills/daily-workflow/validate_daily_workflow_config.py
 
 ## 一句话
 
-先运行安装脚本，把配置落到 `~/.claude/skills/daily-workflow/`，再补好 Jira 与 SVN 映射；之后就可以按“拉 Jira -> 改代码 -> 局部 diff 确认 -> SVN -> Jira -> 日报/周报”的顺序走完整条链。 
+先运行安装脚本，把配置落到 `~/.codex/skills/daily-workflow/` 或 `~/.claude/skills/daily-workflow/`，再补好 Jira 与 SVN 映射；之后就可以按“拉 Jira -> 改代码 -> 局部 diff 确认 -> SVN -> Jira -> 日报/周报”的顺序走完整条链。 
+
+## Automated Verification
+
+The workflow now supports config-driven automated verification commands inside `svn-mapping.json`.
+
+Example:
+
+```json
+{
+  "projectName": "一体化平台",
+  "frontendPath": "D:/svn/imcp/web",
+  "verification": {
+    "testCommand": "npm test -- login",
+    "buildCommand": "npm run build",
+    "smokeCommand": "",
+    "defaultCwd": "frontendPath",
+    "shell": "powershell"
+  }
+}
+```
+
+If you are driving the flow through MCP, prefer:
+
+- `jira-local.get_verification_plan(issueKey, matchIndex=0)`
+- `jira-local.run_verification(issueKey, matchIndex=0, mode="auto")`
+
+After the workspace is resolved, use either the configured commands directly or run:
+
+```bash
+python claude-assets/skills/daily-workflow/run_verification.py --workspace "D:/svn/imcp/web" --test-command "npm test -- login" --build-command "npm run build" --mode all
+```
+
+`--mode auto` runs the first configured command, usually the automated test command.

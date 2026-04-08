@@ -1,31 +1,45 @@
 {
-  "_comment": "JIRA -> 本地 SVN 路径映射示例。复制为 svn-mapping.json 后，按你的真实工作副本路径修改。",
+  "_comment": "JIRA to local SVN workspace mapping example. Copy to svn-mapping.json and replace with real paths.",
   "_howToConfigure": [
-    "每个 mapping 代表一类工单应该落到哪个本地 SVN 目录。",
-    "projectName: 必填，建议填写 JIRA 项目名称。",
-    "componentName: 选填。为空表示整个项目共用；填写后优先匹配该组件。",
-    "keywords: 选填。用于标题/描述辅助匹配。",
-    "frontendPath/backendPath/rootPath: 按你的真实 SVN 工作副本路径填写，没有就留空字符串。",
-    "至少保证 frontendPath、backendPath、rootPath 其中一个非空。"
+    "Each mapping represents one kind of issue landing in one local SVN workspace.",
+    "projectName: required. Prefer the exact JIRA project display name.",
+    "componentName: optional. When provided it is preferred over keyword-only matches.",
+    "keywords: optional. Used as a fallback match from title or description.",
+    "frontendPath/backendPath/rootPath: fill in your real SVN working copy paths. At least one must be non-empty.",
+    "verification: optional. Configure testCommand/buildCommand/smokeCommand so the workflow can run automated verification after code changes."
   ],
   "mappings": [
     {
-      "_comment": "示例1：前后端分离项目",
+      "_comment": "Example 1: split frontend/backend project",
       "projectName": "一体化平台",
       "componentName": "权限管理",
       "keywords": ["登录", "菜单", "权限"],
       "frontendPath": "D:/svn/imcp/web",
       "backendPath": "D:/svn/imcp/service",
-      "rootPath": "D:/svn/imcp"
+      "rootPath": "D:/svn/imcp",
+      "verification": {
+        "testCommand": "npm test -- login",
+        "buildCommand": "npm run build",
+        "smokeCommand": "",
+        "defaultCwd": "frontendPath",
+        "shell": "powershell"
+      }
     },
     {
-      "_comment": "示例2：只有单仓目录的项目",
+      "_comment": "Example 2: single workspace project",
       "projectName": "金格协同",
       "componentName": "",
       "keywords": ["流程", "表单"],
       "frontendPath": "",
       "backendPath": "",
-      "rootPath": "D:/svn/kinge"
+      "rootPath": "D:/svn/kinge",
+      "verification": {
+        "testCommand": "mvn -q test",
+        "buildCommand": "mvn -q package -DskipTests",
+        "smokeCommand": "",
+        "defaultCwd": "rootPath",
+        "shell": "powershell"
+      }
     }
   ]
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import base64
+import argparse
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -16,25 +17,14 @@ if str(SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(SKILL_DIR))
 
 from work_summary import WorkEvent, append_event, write_daily_report, write_weekly_report
+from workflow_support import build_jira_auth_headers, build_transition_plan, load_jira_runtime_config, resolve_jira_config_path
 
 
 ISSUE_KEY_PATTERN = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
 SVN_COMMIT_PATTERN = re.compile(r"(^|[;&|][&|]?\s*|&&\s*)svn\s+(commit|ci)\b")
-TRANSITION_CHAINS = {
-    "任务": ["开放", "开发中", "提交测试"],
-    "缺陷": ["开放", "开发中", "已解决"],
-}
-DEFAULT_TIMEOUT = 10
-USER_SKILL_DIR = Path.home() / ".claude" / "skills" / "daily-workflow"
-JIRA_CONFIG_PATH = USER_SKILL_DIR / "jira-config.json"
-JIRA_CONFIG_EXAMPLE = SKILL_DIR / "jira-config.example.json"
-
-
-def resolve_example_file(filename: str) -> Path:
-    user_path = USER_SKILL_DIR / filename
-    if user_path.exists():
-        return user_path
-    return SKILL_DIR / filename
+SVN_COMMIT_FILE_PATTERN = re.compile(r'(?:^|\s)(?:-F|--file)\s+(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))')
+SVN_REVISION_PATTERN = re.compile(r"Committed revision\s+(\d+)", re.IGNORECASE)
+JIRA_CONFIG_PATH = resolve_jira_config_path()
 
 
 def load_payload() -> dict:
@@ -56,6 +46,15 @@ def get_cwd(payload: dict) -> str:
     return cwd if isinstance(cwd, str) else ""
 
 
+def get_tool_output(payload: dict) -> str:
+    value = payload.get("tool_output") or payload.get("toolOutput") or ""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return json.dumps(value, ensure_ascii=False)
+
+
 def should_handle(command: str) -> bool:
     return bool(SVN_COMMIT_PATTERN.search(command))
 
@@ -68,13 +67,55 @@ def extract_issue_keys(command: str) -> list[str]:
     return seen
 
 
-def build_headers(username: str, password: str) -> dict[str, str]:
-    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
-    return {
-        "Authorization": f"Basic {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
+def extract_commit_file_path(command: str, workspace: str = "") -> Path | None:
+    match = SVN_COMMIT_FILE_PATTERN.search(command)
+    if not match:
+        return None
+
+    raw_path = next((item for item in match.groups() if item), "")
+    if not raw_path:
+        return None
+
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        return candidate
+
+    base_dir = Path(workspace).expanduser() if workspace else Path.cwd()
+    return base_dir / candidate
+
+
+def extract_issue_keys_from_commit_file(command: str, workspace: str = "") -> list[str]:
+    commit_file = extract_commit_file_path(command, workspace)
+    if commit_file is None or not commit_file.exists():
+        return []
+    try:
+        return extract_issue_keys(commit_file.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        return extract_issue_keys(commit_file.read_text(encoding="utf-8-sig"))
+
+
+def extract_svn_revision(svn_output: str) -> str:
+    match = SVN_REVISION_PATTERN.search(svn_output or "")
+    return match.group(1) if match else ""
+
+
+def build_event_id(issue_key: str, command: str, workspace: str, status: str, transitions: list[str], svn_output: str) -> str:
+    revision = extract_svn_revision(svn_output)
+    if revision:
+        return f"svn-revision:{revision}:{issue_key}"
+
+    digest = hashlib.sha1(
+        "||".join(
+            [
+                issue_key.strip(),
+                command.strip(),
+                workspace.strip(),
+                status.strip(),
+                "->".join(item.strip() for item in transitions if item.strip()),
+            ]
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"svn-fallback:{digest}"
 
 
 def build_url(base_url: str, api_path: str, path: str) -> str:
@@ -92,11 +133,7 @@ def request_json(method: str, url: str, headers: dict[str, str], timeout: int, b
 
 
 def get_issue(headers: dict[str, str], base_url: str, api_path: str, timeout: int, issue_key: str) -> dict:
-    query = urllib.parse.urlencode(
-        {
-            "fields": "summary,issuetype,status,project",
-        }
-    )
+    query = urllib.parse.urlencode({"fields": "summary,issuetype,status,project"})
     url = build_url(base_url, api_path, f"/issue/{issue_key}?{query}")
     return request_json("GET", url, headers, timeout)
 
@@ -126,7 +163,13 @@ def run_chain(headers: dict[str, str], jira_config: dict, issue_key: str) -> dic
     fields = issue.get("fields") or {}
     issue_type = ((fields.get("issuetype") or {}).get("name") or "").strip()
     current_status = ((fields.get("status") or {}).get("name") or "").strip()
-    chain = TRANSITION_CHAINS.get(issue_type)
+    initial_transitions = get_transitions(headers, jira_config["baseUrl"], jira_config["apiPath"], jira_config["timeout"], issue_key)
+    initial_plan = build_transition_plan(
+        issue_type,
+        current_status,
+        [str(item.get("name") or "").strip() for item in initial_transitions],
+    )
+
     result = {
         "issueKey": issue_key,
         "issueType": issue_type or "Unknown",
@@ -136,23 +179,24 @@ def run_chain(headers: dict[str, str], jira_config: dict, issue_key: str) -> dic
         "originalStatus": current_status or "Unknown",
     }
 
-    if not chain:
-        result.update({"skipped": True, "reason": "unsupported_issue_type"})
-        return result
-    if current_status not in chain:
-        result.update({"skipped": True, "reason": "unsupported_current_status"})
+    if initial_plan["skipped"]:
+        result.update({"skipped": True, "reason": initial_plan["reason"]})
         return result
 
-    current_index = chain.index(current_status)
-    if current_index == len(chain) - 1:
+    remaining = initial_plan["remainingChain"]
+    if not remaining:
         result.update({"transitioned": [], "finalStatus": current_status})
         return result
 
     executed: list[str] = []
     status = current_status
-    for target_status in chain[current_index + 1 :]:
+    for target_status in remaining:
         transitions = get_transitions(
-            headers, jira_config["baseUrl"], jira_config["apiPath"], jira_config["timeout"], issue_key
+            headers,
+            jira_config["baseUrl"],
+            jira_config["apiPath"],
+            jira_config["timeout"],
+            issue_key,
         )
         transition_id = find_transition_id(transitions, target_status)
         if not transition_id:
@@ -212,59 +256,17 @@ def build_message(results: list[dict], report_messages: list[str]) -> list[str]:
     return lines
 
 
-def normalize_api_path(api_path: object) -> str:
-    value = str(api_path or "").strip()
-    if not value:
-        return "/rest/api/2"
-    if value.startswith("/"):
-        return value.rstrip("/")
-    return "/" + value.rstrip("/")
-
-
 def load_jira_config() -> dict:
-    if not JIRA_CONFIG_PATH.exists():
-        raise RuntimeError(
-            f"JIRA config file was not found: {JIRA_CONFIG_PATH}. "
-            f"Create jira-config.json from {resolve_example_file('jira-config.example.json').name} first."
-        )
-
-    try:
-        config = json.loads(JIRA_CONFIG_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"JIRA config is not valid JSON: {error}") from error
-
-    base_url = str(config.get("baseUrl", "")).strip().rstrip("/")
-    username = str(config.get("username", "")).strip()
-    password = str(config.get("password", "")).strip()
-    api_path = normalize_api_path(config.get("apiPath", "/rest/api/2"))
-    report_output_dir = str(config.get("reportOutputDir", "")).strip()
-
-    try:
-        timeout = int(config.get("timeout", DEFAULT_TIMEOUT))
-    except (TypeError, ValueError) as error:
-        raise RuntimeError("jira-config.json field timeout must be a positive integer") from error
-
-    if timeout <= 0:
-        raise RuntimeError("jira-config.json field timeout must be greater than 0")
-    if not base_url or not username or not password:
-        raise RuntimeError("jira-config.json must include baseUrl, username, and password")
-
-    return {
-        "baseUrl": base_url,
-        "username": username,
-        "password": password,
-        "apiPath": api_path,
-        "timeout": timeout,
-        "reportOutputDir": Path(report_output_dir).expanduser() if report_output_dir else USER_SKILL_DIR / "reports",
-    }
+    return load_jira_runtime_config(JIRA_CONFIG_PATH)
 
 
-def record_reports(results: list[dict], jira_config: dict, command: str, workspace: str) -> list[str]:
+def record_reports(results: list[dict], jira_config: dict, command: str, workspace: str, svn_output: str = "") -> list[str]:
     report_dir = Path(jira_config["reportOutputDir"])
     recorded = 0
     report_messages: list[str] = []
     now = datetime.now().astimezone()
     today = now.date().isoformat()
+    revision = extract_svn_revision(svn_output)
 
     for result in results:
         if result.get("error") or result.get("skipped"):
@@ -280,6 +282,15 @@ def record_reports(results: list[dict], jira_config: dict, command: str, workspa
             workspace=workspace,
             svn_command=command,
             transitions=list(result.get("transitioned") or []),
+            event_id=build_event_id(
+                result.get("issueKey", ""),
+                command,
+                workspace,
+                result.get("finalStatus") or result.get("originalStatus") or "",
+                list(result.get("transitioned") or []),
+                svn_output,
+            ),
+            svn_revision=revision,
         )
         append_event(report_dir, event)
         recorded += 1
@@ -295,23 +306,23 @@ def record_reports(results: list[dict], jira_config: dict, command: str, workspa
     return report_messages
 
 
-def main() -> None:
-    payload = load_payload()
-    command = get_command(payload).strip()
+def process_command(command: str, workspace: str = "", svn_output: str = "") -> list[str]:
     if not command or not should_handle(command):
-        return
+        return []
 
     issue_keys = extract_issue_keys(command)
+    for issue_key in extract_issue_keys_from_commit_file(command, workspace):
+        if issue_key not in issue_keys:
+            issue_keys.append(issue_key)
     if not issue_keys:
-        return
+        return []
 
     try:
         jira_config = load_jira_config()
     except Exception as error:
-        print(json.dumps({"systemMessage": f"SVN committed, but JIRA auto-transition did not run: {error}"}, ensure_ascii=False))
-        return
+        return [f"SVN committed, but JIRA auto-transition did not run: {error}"]
 
-    headers = build_headers(jira_config["username"], jira_config["password"])
+    headers = build_jira_auth_headers(jira_config)
     results: list[dict] = []
     for issue_key in issue_keys:
         try:
@@ -335,8 +346,40 @@ def main() -> None:
                 }
             )
 
-    report_messages = record_reports(results, jira_config, command, get_cwd(payload))
+    report_messages = record_reports(results, jira_config, command, workspace, svn_output)
     message_lines = build_message(results, report_messages)
+    return message_lines
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Handle post-SVN JIRA transition and report generation.")
+    parser.add_argument("--command", help="Run in manual mode with the original svn command line.")
+    parser.add_argument("--cwd", default="", help="Optional workspace path for manual mode.")
+    parser.add_argument("--svn-output", default="", help="Optional SVN command output used to extract committed revision.")
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Print plain text instead of Claude hook JSON output in manual mode.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.command:
+        message_lines = process_command(args.command.strip(), args.cwd.strip(), args.svn_output)
+        if not message_lines:
+            return
+        message = "JIRA auto-transition result:\n" + "\n".join(message_lines)
+        if args.plain:
+            print(message)
+        else:
+            print(json.dumps({"systemMessage": message}, ensure_ascii=False))
+        return
+
+    payload = load_payload()
+    command = get_command(payload).strip()
+    message_lines = process_command(command, get_cwd(payload), get_tool_output(payload))
     if message_lines:
         print(json.dumps({"systemMessage": "JIRA auto-transition result:\n" + "\n".join(message_lines)}, ensure_ascii=False))
 

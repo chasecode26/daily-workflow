@@ -122,8 +122,32 @@ function Test-ConfigNeedsSetup {
     return $false
 }
 
+function Resolve-SkillsDestination {
+    $explicitRoot = [string]$env:DAILY_WORKFLOW_SKILLS_HOME
+    if ($explicitRoot.Trim()) {
+        return $explicitRoot
+    }
+
+    $codexHome = [string]$env:CODEX_HOME
+    if ($codexHome.Trim()) {
+        return (Join-Path $codexHome "skills")
+    }
+
+    $codexSkills = Join-Path $HOME ".codex\skills"
+    if (Test-Path -LiteralPath $codexSkills) {
+        return $codexSkills
+    }
+
+    $claudeSkills = Join-Path $HOME ".claude\skills"
+    if (Test-Path -LiteralPath $claudeSkills) {
+        return $claudeSkills
+    }
+
+    return $codexSkills
+}
+
 $skillsSrc = Join-Path $ScriptDir "claude-assets\skills"
-$skillsDst = Join-Path $HOME ".claude\skills"
+$skillsDst = Resolve-SkillsDestination
 $req = Join-Path $ScriptDir "jira-mcp\requirements.txt"
 $hook = Join-Path $ScriptDir "claude-assets\hooks\svn_jira_transition_hook.py"
 $skillSrcDir = Join-Path $ScriptDir "claude-assets\skills\daily-workflow"
@@ -139,6 +163,7 @@ Write-Step "=== 安装技能 ==="
 if (-not (Test-Path -LiteralPath $skillsSrc)) {
     Write-Output ("跳过：技能目录不存在 (" + $skillsSrc + ")")
 } else {
+    Write-Output ("  安装目标: " + $skillsDst)
     Invoke-Action -Preview ("New-Item -ItemType Directory -Force " + $skillsDst) -Action {
         New-Item -ItemType Directory -Force -Path $skillsDst | Out-Null
     }
@@ -205,10 +230,10 @@ if (-not (Test-Path -LiteralPath $validator)) {
     Write-Output "      请先按实际环境修改 jira-config.json 和 svn-mapping.json"
     Write-Output "      修改完成后重新运行安装脚本，或手动执行校验脚本"
 } elseif ($DryRun) {
-    Write-Output ("  [dry-run] python " + $validator)
+    Write-Output ("  [dry-run] python " + $validator + " --skill-dir """ + $skillTargetDir + """")
 } else {
-    Write-Output ("  python " + $validator)
-    & python $validator
+    Write-Output ("  python " + $validator + " --skill-dir """ + $skillTargetDir + """")
+    & python $validator --skill-dir $skillTargetDir
     if ($LASTEXITCODE -eq 0) {
         Write-Output "  配置校验通过"
     } else {

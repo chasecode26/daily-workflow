@@ -11,6 +11,5 @@
   "issueTypeAliases": {
     "task": ["任务", "Task", "Story", "需求"],
     "bug": ["缺陷", "Bug", "故障"]
-  },
-  "reportOutputDir": "~/.claude/skills/daily-workflow/reports"
+  }
 }

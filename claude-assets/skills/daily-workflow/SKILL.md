@@ -40,6 +40,12 @@ The pull step must support:
 
 Prefer the `jira-local.get_my_issues` MCP tool first.
 
+Available MCP helpers for this workflow:
+- `jira-local.resolve_workspace(issueKey)` to resolve frontend/backend/root SVN candidates from `svn-mapping.json`
+- `jira-local.plan_transition(issueKey)` to preview the next JIRA status step before any transition is executed
+- `jira-local.get_verification_plan(issueKey, matchIndex=0)` to resolve the automated verification workspace and commands
+- `jira-local.run_verification(issueKey, matchIndex=0, mode="auto")` to execute the configured automated verification
+
 ### 2. Pull and display issues
 Use the configured defaults:
 - assignee = `jira-config.json.assignee`
@@ -73,6 +79,8 @@ After one issue is selected, match in this order:
 2. `componentName` exact match
 3. keyword match from title / description
 
+Prefer `jira-local.resolve_workspace(issueKey)` first when the local mapping file is present.
+
 If one mapping matches, continue.
 If multiple mappings match, stop and ask the user to choose.
 If no mapping matches, ask whether to save a new mapping before writing config.
@@ -91,6 +99,12 @@ Prefer verification in this order:
 2. build command
 3. startup + smoke validation
 4. browser validation only if the project already has a stable local workflow
+
+If the resolved workspace includes `verification.testCommand`, `verification.buildCommand`, or `verification.smokeCommand`, prefer those configured commands first.
+
+You may execute them through:
+- direct shell execution in the selected workspace, or
+- `python claude-assets/skills/daily-workflow/run_verification.py --workspace "<path>" --test-command "<cmd>" --build-command "<cmd>" --smoke-command "<cmd>" --mode auto|all`
 
 If verification cannot run, explain why and downgrade to manual verification pending.
 
@@ -118,6 +132,8 @@ Never commit or push SVN automatically unless the user asked for it.
 ### 10. JIRA status transition after SVN submission
 After SVN submission succeeds, transition JIRA immediately in workflow order.
 
+Before executing any transition, prefer `jira-local.plan_transition(issueKey)` to preview the remaining chain and confirm the next target is actually available in the current workflow state.
+
 For `任务`:
 - `开放 -> 开发中 -> 提交测试`
 
@@ -135,7 +151,9 @@ After a successful SVN submission:
 - generate `daily-YYYY-MM-DD.md`
 - if the current day is Friday, also generate `weekly-YYYY-MM-DD-YYYY-MM-DD.md`
 
-Report output directory defaults to `jira-config.json.reportOutputDir`, otherwise `~/.claude/skills/daily-workflow/reports`.
+Report output directory defaults to `jira-config.json.reportOutputDir`, otherwise `<active-skill-home>/reports` under either `.codex` or `.claude`.
+
+In Codex environments without automatic post-tool hooks, run `python claude-assets/hooks/svn_jira_transition_hook.py --plain --cwd "<workspace>" --command 'svn commit -m "KEY-123 message"'` after a successful SVN commit to execute the same transition/report flow manually.
 
 ## Response Format
 
@@ -153,6 +171,7 @@ Return in this order:
 - user change target
 - supplemental explanation
 - matched frontend/backend/workspace paths
+- resolved automated verification commands, if any
 - which path will be opened first
 - verification plan
 - current blocker or confirmation request
@@ -163,6 +182,7 @@ Return in this order:
 - why the change solves the issue
 - supplemental explanation
 - compact code preview with changed hunks only
+- verification commands that were actually run
 - verification result
 - whether to submit to SVN
 
@@ -170,6 +190,7 @@ Return in this order:
 Return in this order:
 - SVN result
 - JIRA issue type
+- transition plan preview, if it was checked before execution
 - transition chain executed
 - final JIRA status
 - generated daily report path

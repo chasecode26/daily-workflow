@@ -1,0 +1,8 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Project-local Codex config for daily-workflow.
+# Keep this file minimal so it can layer on top of each user's global Codex config.
+
+[mcp_servers.jira-local]
+command = "python"
+args = ["./jira-mcp/server.py"]

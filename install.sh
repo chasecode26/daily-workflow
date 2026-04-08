@@ -16,6 +16,30 @@ run() {
   fi
 }
 
+resolve_skills_destination() {
+  if [[ -n "${DAILY_WORKFLOW_SKILLS_HOME:-}" ]]; then
+    printf '%s\n' "$DAILY_WORKFLOW_SKILLS_HOME"
+    return 0
+  fi
+
+  if [[ -n "${CODEX_HOME:-}" ]]; then
+    printf '%s\n' "$CODEX_HOME/skills"
+    return 0
+  fi
+
+  if [[ -d "$HOME/.codex/skills" ]]; then
+    printf '%s\n' "$HOME/.codex/skills"
+    return 0
+  fi
+
+  if [[ -d "$HOME/.claude/skills" ]]; then
+    printf '%s\n' "$HOME/.claude/skills"
+    return 0
+  fi
+
+  printf '%s\n' "$HOME/.codex/skills"
+}
+
 initialize_or_update_config() {
   local src="$1"
   local dst="$2"
@@ -81,7 +105,7 @@ print('False')" "$jira_file" "$mapping_file" | grep -qx "True"
 }
 
 SKILLS_SRC="$SCRIPT_DIR/claude-assets/skills"
-SKILLS_DST="$HOME/.claude/skills"
+SKILLS_DST="$(resolve_skills_destination)"
 REQ="$SCRIPT_DIR/jira-mcp/requirements.txt"
 HOOK="$SCRIPT_DIR/claude-assets/hooks/svn_jira_transition_hook.py"
 SKILL_SRC_DIR="$SCRIPT_DIR/claude-assets/skills/daily-workflow"
@@ -98,6 +122,7 @@ echo "=== 安装技能 ==="
 if [[ ! -d "$SKILLS_SRC" ]]; then
   echo "跳过：技能目录不存在 ($SKILLS_SRC)"
 else
+  echo "  安装目标: $SKILLS_DST"
   run mkdir -p "$SKILLS_DST"
   count=0
   for skill_dir in "$SKILLS_SRC"/*/; do
@@ -160,10 +185,10 @@ elif config_needs_setup "$JIRA_FILE" "$MAPPING_FILE"; then
   echo "      请先按实际环境修改 jira-config.json 和 svn-mapping.json"
   echo "      修改完成后重新运行安装脚本，或手动执行校验脚本"
 elif [[ "$DRY_RUN" == true ]]; then
-  echo "  [dry-run] python $VALIDATOR"
+  echo "  [dry-run] python $VALIDATOR --skill-dir \"$SKILL_TARGET_DIR\""
 else
-  echo "  python $VALIDATOR"
-  if python "$VALIDATOR"; then
+  echo "  python $VALIDATOR --skill-dir \"$SKILL_TARGET_DIR\""
+  if python "$VALIDATOR" --skill-dir "$SKILL_TARGET_DIR"; then
     echo "  配置校验通过"
   else
     echo "  警告：配置校验未通过，请按提示修正后再使用"

@@ -22,6 +22,8 @@ class WorkEvent:
     workspace: str
     svn_command: str
     transitions: list[str]
+    event_id: str = ""
+    svn_revision: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -35,6 +37,8 @@ class WorkEvent:
             "workspace": self.workspace,
             "svnCommand": self.svn_command,
             "transitions": self.transitions,
+            "eventId": self.event_id,
+            "svnRevision": self.svn_revision,
         }
 
     @classmethod
@@ -50,6 +54,8 @@ class WorkEvent:
             workspace=str(data.get("workspace", "")).strip(),
             svn_command=str(data.get("svnCommand", "")).strip(),
             transitions=[str(item).strip() for item in (data.get("transitions") or []) if str(item).strip()],
+            event_id=str(data.get("eventId", "")).strip(),
+            svn_revision=str(data.get("svnRevision", "")).strip(),
         )
 
 
@@ -61,6 +67,17 @@ def ensure_report_dir(report_dir: Path) -> Path:
 def append_event(report_dir: Path, event: WorkEvent) -> Path:
     report_dir = ensure_report_dir(report_dir)
     events_path = report_dir / EVENTS_FILENAME
+    if event.event_id and events_path.exists():
+        for raw_line in events_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                existing = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if str(existing.get("eventId", "")).strip() == event.event_id:
+                return events_path
     with events_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
     return events_path
